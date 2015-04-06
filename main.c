@@ -29,6 +29,12 @@ enum game_state state;
 // Keep track of the x-position of the ship
 uint8_t ship;
 
+// Keep track of lives left
+int8_t lives;
+
+// Blink ship when hit
+uint8_t just_hit;
+
 // Keeps track of asteroids
 struct asteroid {
   uint8_t x; // column of asteroid, stays the same
@@ -49,9 +55,15 @@ void update_asteroids() {
       // check for collision with spaceship
       if ((asteroids[i].y == 6 && asteroids[i].x == ship)
           || (asteroids[i].y == 7 && asteroids[i].x >= ship - 1 && asteroids[i].x <= ship + 1)) {
-        // we've been hit, game over
-        c = 0;
-        state = END;
+        // deactivate the asteroid so it doesn't "double-hit"
+        asteroids[i].live = FALSE;
+        // we've been hit, lose a life
+        lives--;
+        just_hit = TRUE; // blink the ship
+        if (lives < 0) { // out of lives, game over
+          c = 0;
+          state = END;
+        }
       }
 
       // stop updating if it's fallen off the board
@@ -153,11 +165,18 @@ void game_update() {
   y = (y > 6) ? 6 : y;
   ship = 7 - y;
 
-  // draw spaceship
-  grid[6] |= (1 << ship);
-  grid[7] |= (1 << (ship - 1));
-  grid[7] |= (1 << ship);
-  grid[7] |= (1 << (ship + 1));
+  // draw life bar
+  grid[0] |= 0xFF >> (8 - lives * 2);
+
+  // blink spaceship if just hit
+  if (!just_hit) {
+    grid[6] |= (1 << ship);
+    grid[7] |= (1 << (ship - 1));
+    grid[7] |= (1 << ship);
+    grid[7] |= (1 << (ship + 1));
+  } else {
+    just_hit = FALSE;
+  }
 
   // draw asteroids
   if (++c >= 3) {
@@ -172,7 +191,7 @@ void game_update() {
     }
   }
   for (i = 0; i < NUM_ASTEROIDS; i++) {
-    if (asteroids[i].live) {
+    if (asteroids[i].live && asteroids[i].y >= 0) {
       grid[asteroids[i].y] |= (1 << asteroids[i].x);
     }
   }
@@ -185,7 +204,7 @@ void end_update() {
   uint8_t explosion_index = c / 3;
   if (explosion_index > EXPLOSION_LENGTH) {
     c = 0;
-    sleep_flag = 1;
+    sleep_flag = TRUE;
   }
 
   display_font(explosion_sequence, explosion_index);
@@ -245,12 +264,14 @@ int main() {
 
   while (1) {
     sleep_mode(); // go to sleep
-    _delay_ms(500);
-    //if (PIND & (1 << PD2)) // check to make sure the button is pressed 500ms later
-    //  continue;
+    _delay_ms(1000);
+    if (PIND & (1 << PD2)) // check to make sure the button is pressed 500ms later
+      continue;
 
     // initialize game state
     state = INTRO;
+    lives = 4;
+    just_hit = FALSE;
 
     // initialize asteroids
     for (i = 0; i < NUM_ASTEROIDS; i++) {
@@ -264,8 +285,8 @@ int main() {
 
     c = 0;
     while (1) {
-      if (sleep_flag == 1) {
-        sleep_flag = 0;
+      if (sleep_flag) { // break loop if game is over
+        sleep_flag = FALSE;
         break;
       }
       for (i = 0; i < 8; i++) {
