@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <avr/io.h>
+#include <avr/sleep.h>
 #include <avr/interrupt.h>
 #define F_CPU 8000000UL
 #include <util/delay.h>
@@ -19,6 +20,7 @@ uint8_t grid[8] = { 0, 0, 0, 0, 0, 0, 0, 0 };
 
 uint8_t c = 0;
 uint8_t ac = 0;
+uint8_t sleep_flag; // game is over, go to sleep
 
 // Keep track of game state
 enum game_state { INTRO, GAME, END };
@@ -183,7 +185,7 @@ void end_update() {
   uint8_t explosion_index = c / 3;
   if (explosion_index > EXPLOSION_LENGTH) {
     c = 0;
-    return;
+    sleep_flag = 1;
   }
 
   display_font(explosion_sequence, explosion_index);
@@ -219,42 +221,67 @@ void seed_rng() {
   ADCSRA &= ~(1 << ADEN); // disable ADC
 }
 
+ISR(INT0_vect) {
+  // do nothing
+}
+
 int main() {
   accel_init();
   seed_rng();
 
   uint8_t i, j, row_hit;
 
-  // initialize game state
-  state = INTRO;
-
-  // initialize asteroids
-  for (i = 0; i < NUM_ASTEROIDS; i++) {
-    asteroids[0].x = 0;
-    asteroids[0].y = 0;
-    asteroids[0].live = FALSE;
-  }
-
   // set up timers
   TIMSK0 |= (1 << TOIE0); // enable timer 0 overflow interrupt
   TCNT0 = 0x00; // set timer 0 counter to 0
   TCCR0B |= (1 << CS02) | (1 << CS00); // set timer 0 presdcaler to /1024
+
+  HIGH(D, 2); // activate pull-up on button
+  EICRA |= (1 << ISC01); // rising edge on INT0 triggers interrupt
+  EIMSK |= (1 << INT0); // enable INT0 interrupt
   sei(); // enable interrupts
 
+  set_sleep_mode(2); // set sleep mode to "power-down" mode
+
   while (1) {
-    for (i = 0; i < 8; i++) {
-      (*enable[i])();
-      (*high[i])();
-      for (j = 0; j < 8; j++) {
-        if (grid[j] & (1 << i)) {
-          row_hit = i + j < 8 ? 8 - j : 7 - j;
-          (*enable[row_hit])();
-          _delay_us(500);
-          (*disable[row_hit])();
-        }
+    sleep_mode(); // go to sleep
+    _delay_ms(500);
+    //if (PIND & (1 << PD2)) // check to make sure the button is pressed 500ms later
+    //  continue;
+
+    // initialize game state
+    state = INTRO;
+
+    // initialize asteroids
+    for (i = 0; i < NUM_ASTEROIDS; i++) {
+      asteroids[0].x = 0;
+      asteroids[0].y = 0;
+      asteroids[0].live = FALSE;
+    }
+
+    // clear grid
+    display_center(' ');
+
+    c = 0;
+    while (1) {
+      if (sleep_flag == 1) {
+        sleep_flag = 0;
+        break;
       }
-      (*disable[i])();
-      (*low[i])();
+      for (i = 0; i < 8; i++) {
+        (*enable[i])();
+        (*high[i])();
+        for (j = 0; j < 8; j++) {
+          if (grid[j] & (1 << i)) {
+            row_hit = i + j < 8 ? 8 - j : 7 - j;
+            (*enable[row_hit])();
+            _delay_us(500);
+            (*disable[row_hit])();
+          }
+        }
+        (*disable[i])();
+        (*low[i])();
+      }
     }
   }
   
